@@ -1,0 +1,66 @@
+---
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: chatbot-appx-rag-ui
+  namespace: tssc-gitops
+  annotations:
+    argocd.argoproj.io/sync-wave: "1"
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: chatbot-appx-bootstrap
+  source:
+    repoURL: https://github.com/org4rong/chatbot-appx-gitops.git
+    targetRevision: HEAD
+    path: ./helm/rag
+    helm:
+      valueFiles:
+        - values.yaml
+      parameters:
+        - name: global.models.llama-3-2-1b-instruct.enabled
+          value: "true"
+        - name: global.models..enabled
+          value: "false"
+        - name: llama-stack.mcp-servers.mcp-weather.uri
+          value: "http://chatbot-appx-rag-ui-mcp-weather:8000/sse"
+        - name: llm-service.secret.enabled
+          value: "false"
+        - name: ingestion-pipeline.enableSigning
+          value: "true"
+      values: |
+        llama-stack:
+          secrets: {}
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: chatbot-appx-ns
+  ignoreDifferences:
+    - group: "*"
+      jqPathExpressions:
+        - '.imagePullSecrets[] | select(.name | contains("-dockercfg-"))'
+      kind: ServiceAccount
+    - group: kubeflow.org
+      jqPathExpressions:
+        - '.spec.template.spec.containers[] | select(.name == "oauth-proxy")'
+        - '.spec.template.spec.volumes[] | select(.name | IN("trusted-ca", "oauth-config", "tls-certificates"))'
+        - '.spec.template.spec.containers[] | select(.name != "oauth-proxy").env[] | select(.name | IN("PIP_CERT", "REQUESTS_CA_BUNDLE", "SSL_CERT_FILE", "PIPELINES_SSL_SA_CERTS", "GIT_SSL_CAINFO"))'
+        - '.spec.template.spec.containers[] | select(.name != "oauth-proxy").volumeMounts[] | select(.name == "trusted-ca")'
+      kind: Notebook
+    - group: route.openshift.io
+      jsonPointers:
+        - /metadata/annotations/openshift.io~1host.generated
+        - /spec/alternateBackends
+      kind: Route
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - ApplyOutOfSyncOnly=true
+      - CreateNamespace=true
+    retry:
+      limit: -1
+      backoff:
+        duration: 5s # the amount to back off. Default unit is seconds, but could also be a duration (e.g. "2m", "1h")
+        factor: 2 # a factor to multiply the base duration after each failed retry
+        maxDuration: 2m # the maximum amount of time allowed for the backoff strategy
